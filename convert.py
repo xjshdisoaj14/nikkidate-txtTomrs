@@ -1,13 +1,14 @@
 import re
 import urllib.request
 
+# 三个去广告规则源
 SOURCES = [
     "https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt",
     "https://raw.githubusercontent.com/xinggsf/Adblock-Plus-Rule/master/rule.txt",
     "https://adguardteam.github.io/HostlistsRegistry/assets/filter_7.txt"
 ]
 
-# 符合 RFC 标准的严格域名校验正则
+# 严格的域名 RFC 校验正则
 DOMAIN_REGEX = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+$')
 
 def fetch_rules(url):
@@ -16,14 +17,14 @@ def fetch_rules(url):
         with urllib.request.urlopen(req, timeout=15) as response:
             return response.read().decode('utf-8', errors='ignore').splitlines()
     except Exception as e:
-        print(f"[!] 下载失败: {url}, 错误信息: {e}")
+        print(f"[!] 下载失败: {url}, 错误: {e}")
         return []
 
 def clean_domain(domain):
-    """清洗并验证域名合法性"""
     if not domain:
         return None
     domain = domain.lower().strip('.')
+    # 丢弃带通配符、端口、路径及非法字符的行
     if '*' in domain or '?' in domain or '/' in domain or ':' in domain:
         return None
     if DOMAIN_REGEX.match(domain):
@@ -37,7 +38,7 @@ def parse_adguard_rules(lines):
 
     for line in lines:
         line = line.strip()
-        # 1. 过滤空行、注释及元素选择器
+        # 1. 忽略空行、注释(! 或 #)及元素选择阻断(## / #@# / #?#)
         if not line or line.startswith('!') or line.startswith('#') or '##' in line or '#@#' in line or '#?#' in line:
             continue
 
@@ -47,14 +48,14 @@ def parse_adguard_rules(lines):
             if not line:
                 continue
 
-        # 3. 纯正则表达 -> DOMAIN-REGEX
+        # 3. 处理纯正则: /^admaster\./ -> DOMAIN-REGEX
         if line.startswith('/') and line.endswith('/'):
             regex_pattern = line[1:-1]
             if regex_pattern:
                 domain_regex.add(regex_pattern)
             continue
 
-        # 4. ||example.org^ 前缀阻断 -> DOMAIN-SUFFIX
+        # 4. 处理 ||example.org^ -> DOMAIN-SUFFIX
         if line.startswith('||'):
             core = line[2:].rstrip('^/')
             clean = clean_domain(core)
@@ -62,7 +63,7 @@ def parse_adguard_rules(lines):
                 domain_suffix.add(clean)
             continue
 
-        # 5. |http:// 精确阻断 -> DOMAIN
+        # 5. 处理 |http:// -> DOMAIN
         if line.startswith('|http://') or line.startswith('|https://'):
             core = line.split('://')[-1].split('/')[0].rstrip('^')
             clean = clean_domain(core)
@@ -70,13 +71,13 @@ def parse_adguard_rules(lines):
                 domain_exact.add(clean)
             continue
 
-        # 6. 纯域名 -> DOMAIN-SUFFIX
+        # 6. 处理纯域名 -> DOMAIN-SUFFIX
         core = line.rstrip('^/')
         clean = clean_domain(core)
         if clean:
             domain_suffix.add(clean)
 
-    # 清除冗余包含项
+    # 去重处理：若父级域名存在于后缀集合中，移除冗余的精确匹配项
     final_exact = {d for d in domain_exact if not any(d.endswith('.' + s) or d == s for s in domain_suffix)}
 
     return sorted(domain_suffix), sorted(final_exact), sorted(domain_regex)
@@ -84,12 +85,13 @@ def parse_adguard_rules(lines):
 def main():
     all_lines = []
     for url in SOURCES:
-        print(f"正在抓取源文件: {url}")
+        print(f"正在读取规则源: {url}")
         all_lines.extend(fetch_rules(url))
 
     suffixes, exacts, regexes = parse_adguard_rules(all_lines)
 
-    # 1. 输出标准纯文本规则集 rules.txt (以 +. 为后缀标识，纯域名为精准标识)
+    # 1. 生成符合 Nikki behavior: domain 最高效格式的纯文本 rules.txt
+    # +.example.com 代表后缀匹配，example.com 代表精确匹配
     txt_lines = []
     for s in suffixes:
         txt_lines.append(f"+.{s}")
@@ -99,7 +101,7 @@ def main():
     with open("rules.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(txt_lines))
 
-    # 2. 构造标准的中间构建 YAML，专供 Mihomo CLI 编译成 .mrs
+    # 2. 生成专供 Mihomo CLI 编译使用的标准 YAML 中间文件
     yaml_lines = ["payload:"]
     for s in suffixes:
         yaml_lines.append(f"  - DOMAIN-SUFFIX,{s}")
@@ -111,7 +113,7 @@ def main():
     with open("rules_input.yaml", "w", encoding="utf-8") as f:
         f.write("\n".join(yaml_lines))
 
-    print(f"提取完成！后缀规则: {len(suffixes)} 条，精确规则: {len(exacts)} 条，正则规则: {len(regexes)} 条。")
+    print(f"提取完成！后缀规则 {len(suffixes)} 条，精确规则 {len(exacts)} 条，正则规则 {len(regexes)} 条。")
 
 if __name__ == "__main__":
     main()
