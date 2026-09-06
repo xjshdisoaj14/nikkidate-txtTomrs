@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Step 1 - Fetch & Strictly Clean to High-Performance TXT
+      - name: Step 1 - Run convert.py to Generate Benchmark rules.txt
         run: python convert.py
 
       - name: Install Mihomo CLI Engine
@@ -30,15 +30,17 @@ jobs:
           gunzip mihomo.gz
           chmod +x mihomo
 
-      - name: Step 2 & 3 - Compile MRS Binary and Reverse-Export to YAML
+      - name: Step 2 - Compile adblock.mrs directly from rules.txt
         run: |
-          # 1. 生成 Nikki 极速识别二进制文件
-          ./mihomo convert-ruleset domain yaml rules_input.yaml adblock.mrs
+          # 以 rules.txt 为基准源编译生成二进制文件
+          ./mihomo convert-ruleset domain text rules.txt adblock.mrs
 
-          # 2. 从二进制逆向解包导出标准 rules.yaml
+      - name: Step 3 - Unpack adblock.mrs to rules.yaml for Verification
+        run: |
+          # 从编译好的 adblock.mrs 原样反向解包出 rules.yaml
           ./mihomo convert-ruleset domain mrs adblock.mrs rules.yaml
 
-      - name: Deploy Output Files to Publish Branch
+      - name: Deploy All 3 Files to Publish Branch
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -55,5 +57,5 @@ jobs:
 
           cp /tmp/output/* ./
           git add rules.txt adblock.mrs rules.yaml
-          git commit -m "Auto update clean rulesets: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" || exit 0
+          git commit -m "Auto update strictly aligned rulesets: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" || exit 0
           git push -f origin publish
