@@ -2,9 +2,8 @@ name: Build Nikki MRS Ruleset
 
 on:
   schedule:
-    # 每天 UTC 20:00 (北京时间 04:00) 自动触发
     - cron: '0 20 * * *'
-  workflow_dispatch: # 支持在 GitHub 页面手动点击运行
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -21,43 +20,40 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Run Rule Parser
+      - name: Step 1 - Fetch & Strictly Clean to High-Performance TXT
         run: python convert.py
 
-      - name: Download & Install Mihomo CLI
+      - name: Install Mihomo CLI Engine
         run: |
           MIHOMO_TAG=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
           curl -L -o mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_TAG}/mihomo-linux-amd64-${MIHOMO_TAG}.gz"
           gunzip mihomo.gz
           chmod +x mihomo
 
-      - name: Compile and Export Files
+      - name: Step 2 & 3 - Compile MRS Binary and Reverse-Export to YAML
         run: |
-          # 1. 编译生成二进制 adblock.mrs 文件
+          # 1. 生成 Nikki 极速识别二进制文件
           ./mihomo convert-ruleset domain yaml rules_input.yaml adblock.mrs
-          
-          # 2. 将生成的 adblock.mrs 逆向解包转换回 rules.yaml 文件
+
+          # 2. 从二进制逆向解包导出标准 rules.yaml
           ./mihomo convert-ruleset domain mrs adblock.mrs rules.yaml
 
-      - name: Deploy to publish branch
+      - name: Deploy Output Files to Publish Branch
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          
-          # 将生成的 3 个目标文件临时存放
+
           mkdir /tmp/output
           cp rules.txt /tmp/output/rules.txt
           cp adblock.mrs /tmp/output/adblock.mrs
           cp rules.yaml /tmp/output/rules.yaml
 
-          # 切换/创建干净的 publish 分支，并清除工作区文件
           git checkout --orphan publish || git checkout publish
           git rm -rf .
-          
-          # 还原 3 个文件到分支根目录
+
           cp /tmp/output/* ./
           git add rules.txt adblock.mrs rules.yaml
-          git commit -m "Auto update rulesets: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" || exit 0
+          git commit -m "Auto update clean rulesets: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" || exit 0
           git push -f origin publish
