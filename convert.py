@@ -7,7 +7,7 @@ SOURCES = [
     "https://adguardteam.github.io/HostlistsRegistry/assets/filter_7.txt"
 ]
 
-# 严格的域名合法性校验正则 (符合 RFC 1035 标准，排除非法符号)
+# 符合 RFC 标准的严格域名校验正则
 DOMAIN_REGEX = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+$')
 
 def fetch_rules(url):
@@ -20,11 +20,10 @@ def fetch_rules(url):
         return []
 
 def clean_domain(domain):
-    """严格清理并验证域名合法性"""
+    """清洗并验证域名合法性"""
     if not domain:
         return None
     domain = domain.lower().strip('.')
-    # 丢弃含有通配符、端口、路径及非法字符的域名
     if '*' in domain or '?' in domain or '/' in domain or ':' in domain:
         return None
     if DOMAIN_REGEX.match(domain):
@@ -38,25 +37,24 @@ def parse_adguard_rules(lines):
 
     for line in lines:
         line = line.strip()
-        
-        # 1. 忽略空行、注释(! 或 #)以及 AdGuard 元素阻断规则(## / #@# / #?#)
+        # 1. 过滤空行、注释及元素选择器
         if not line or line.startswith('!') or line.startswith('#') or '##' in line or '#@#' in line or '#?#' in line:
             continue
 
-        # 2. 剥离规则尾部的修饰符 ($script,image,domain=...)
+        # 2. 剥离修饰符
         if '$' in line:
             line = line.split('$')[0].strip()
             if not line:
                 continue
 
-        # 3. 处理纯正则匹配: /^admaster\./ -> DOMAIN-REGEX
+        # 3. 纯正则表达 -> DOMAIN-REGEX
         if line.startswith('/') and line.endswith('/'):
             regex_pattern = line[1:-1]
             if regex_pattern:
                 domain_regex.add(regex_pattern)
             continue
 
-        # 4. 处理 ||example.org^ 基础子域阻断 -> DOMAIN-SUFFIX
+        # 4. ||example.org^ 前缀阻断 -> DOMAIN-SUFFIX
         if line.startswith('||'):
             core = line[2:].rstrip('^/')
             clean = clean_domain(core)
@@ -64,7 +62,7 @@ def parse_adguard_rules(lines):
                 domain_suffix.add(clean)
             continue
 
-        # 5. 处理 |http:// 或 |https:// 精确匹配 -> DOMAIN
+        # 5. |http:// 精确阻断 -> DOMAIN
         if line.startswith('|http://') or line.startswith('|https://'):
             core = line.split('://')[-1].split('/')[0].rstrip('^')
             clean = clean_domain(core)
@@ -72,13 +70,13 @@ def parse_adguard_rules(lines):
                 domain_exact.add(clean)
             continue
 
-        # 6. 处理纯域名形式 -> DOMAIN-SUFFIX
+        # 6. 纯域名 -> DOMAIN-SUFFIX
         core = line.rstrip('^/')
         clean = clean_domain(core)
         if clean:
             domain_suffix.add(clean)
 
-    # 去重优化：如果父级域名已经在 domain_suffix 中，清除冗余的子域名与精确匹配项
+    # 清除冗余包含项
     final_exact = {d for d in domain_exact if not any(d.endswith('.' + s) or d == s for s in domain_suffix)}
 
     return sorted(domain_suffix), sorted(final_exact), sorted(domain_regex)
@@ -86,13 +84,12 @@ def parse_adguard_rules(lines):
 def main():
     all_lines = []
     for url in SOURCES:
-        print(f"正在抓取并清理: {url}")
+        print(f"正在抓取源文件: {url}")
         all_lines.extend(fetch_rules(url))
 
     suffixes, exacts, regexes = parse_adguard_rules(all_lines)
 
-    # 1. 导出为 100% 能够被 Nikki behavior: domain 极速识别的纯文本 txt
-    # 严格确保后缀规则使用 "+." 前缀，单域名直接写入纯域名
+    # 1. 输出标准纯文本规则集 rules.txt (以 +. 为后缀标识，纯域名为精准标识)
     txt_lines = []
     for s in suffixes:
         txt_lines.append(f"+.{s}")
@@ -102,7 +99,7 @@ def main():
     with open("rules.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(txt_lines))
 
-    # 2. 导出为标准格式的 YAML 输入，用于编译 .mrs
+    # 2. 构造标准的中间构建 YAML，专供 Mihomo CLI 编译成 .mrs
     yaml_lines = ["payload:"]
     for s in suffixes:
         yaml_lines.append(f"  - DOMAIN-SUFFIX,{s}")
@@ -114,7 +111,7 @@ def main():
     with open("rules_input.yaml", "w", encoding="utf-8") as f:
         f.write("\n".join(yaml_lines))
 
-    print(f"成功清洗生成！后缀规则: {len(suffixes)} 条，精确规则: {len(exacts)} 条，正则规则: {len(regexes)} 条。")
+    print(f"提取完成！后缀规则: {len(suffixes)} 条，精确规则: {len(exacts)} 条，正则规则: {len(regexes)} 条。")
 
 if __name__ == "__main__":
     main()
